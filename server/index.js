@@ -1,3 +1,4 @@
+
 const express =require('express');
 const mysql=require('mysql');
 const cors = require("cors");
@@ -5,6 +6,10 @@ const bcrypt = require('bcrypt');
 const bodyParser=require("body-parser");
 const cookieparser=require("cookie-parser")
 const session=require("express-session");
+const validator = require("validator"); //Added this line
+const jwt = require("jsonwebtoken");  //Added this line
+const helmet = require("helmet");  //Added this line
+const winston = require("winston"); //Added this line
 const saltRounds = 10;
 
 
@@ -16,11 +21,19 @@ const PORT=process.env.PORT || 8000;
 
 const app=express();
 
+const logger = winston.createLogger({
+    level: "info",
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: "security.log" })
+    ]
+});
 
 app.use(cors({
     origin:"http://localhost:3000",
     credentials:true,
 }));
+app.use(helmet()); //Added this line
 app.use(express.json());
 app.use(cookieparser());
 app.use(bodyParser.urlencoded({extended:true}));
@@ -52,6 +65,16 @@ app.get("/",(req,res)=>{
 app.post("/register",(req,res)=>{
     const email=req.body.email;
     const password=req.body.password;
+
+     // ✅ VALIDATION (STOP IF INVALID)
+    if (!validator.isEmail(email)) {
+        return res.status(400).send("Invalid email");
+    }
+
+    if (validator.isEmpty(password)) {
+        return res.status(400).send("Password required");
+    }
+
     bcrypt.hash(password,saltRounds,(errr,hash)=>{
         const data={
        
@@ -99,55 +122,64 @@ app.post("/register",(req,res)=>{
      
 })
 
-app.post("/login",(req,res)=>{
-   const email=req.body.email;
-    const password=req.body.password;
+app.post("/login", (req, res) => {
+    const email = req.body.email;
+    const password = req.body.password;
 
-    // console.log(email);
-        
-      
-        let sql=`select * from users where email='${email}'`;
-        // console.log(sql);
-        db.query(sql,(err,result)=>{
-            if(err)
-            {
-                // res.send({err:err})
-                console.log(err);
-            }
-            else{
-              
-               if(result.length > 0)
-               {
-                bcrypt.compare(password,result[0].password,(errr,response)=>{
-                    if(response)
-                    {
-                        req.session.user=result;
-                        // console.log(req.session.user);
-                     
-                     res.send({login:true,useremail:email});
+    let sql = `select * from users where email='${email}'`;
+
+    db.query(sql, (err, result) => {
+        if (err) {
+            console.log(err);
+        } else {
+
+            if (result.length > 0) {
+
+                bcrypt.compare(password, result[0].password, (errr, response) => {
+
+                    // PASSWORD MATCHED
+                    if (response) {
+
+                        req.session.user = result;
+
+                        // JWT TOKEN
+                        const jwt = require("jsonwebtoken");
+
+                        const token = jwt.sign(
+                            { id: result[0].id, email: result[0].email },
+                            "secretKey",
+                            { expiresIn: "1h" }
+                        );
+
+                        logger.info(`Successful login: ${email}`);  //Added this line
+
+                        return res.send({
+                            login: true,
+                            useremail: email,
+                            token: token
+                        });
+
                     }
-                    else{
-                     res.send({login:false,msg:"Wrong Password"});
-                    
+
+                    else {
+                        return res.send({
+                            login: false,
+                            msg: "Wrong Password"
+                        });
                     }
-                })
+                });
 
-                
-
-               }
-               else{
-                    res.send({login:false,msg:"User Email Not Exits"});
-                // console.log("noo email ")
-               }
-                
-    
             }
-        })
 
-      
-    
-     
-})
+            else {
+                return res.send({
+                    login: false,
+                    msg: "User Email Not Exists"
+                });
+            }
+        }
+    });
+});
 app.get("/login",(req,res)=>{
     if(req.session.user)
     {
@@ -161,6 +193,7 @@ app.get("/login",(req,res)=>{
 
 
 
-app.listen(PORT,()=>{
-    console.log(`app running in ${PORT}` )
-})
+app.listen(PORT, () => {
+    logger.info(`Application started on port ${PORT}`);
+    console.log(`app running in ${PORT}`);
+});
